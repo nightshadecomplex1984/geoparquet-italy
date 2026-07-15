@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Overture Italy — GeoParquet Explorer</title>
+  <link rel="stylesheet" href="/static/vendor/maplibre-gl.css">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div id="sidebar">
+    <header>
+      <h1>Overture Italy</h1>
+      <p class="subtitle">GeoParquet explorer</p>
+    </header>
+
+    <nav id="tabs">
+      <button class="tab active" data-tab="layers">Layers</button>
+      <button class="tab" data-tab="search">Search</button>
+      <button class="tab" data-tab="sql">SQL</button>
+    </nav>
+
+    <section id="tab-layers" class="tab-panel active">
+      <div id="layer-list"><p class="muted">Loading datasets…</p></div>
+      <div class="panel-footer">
+        <label>Features per layer
+          <input id="limit-input" type="number" value="4000" min="100" max="10000" step="100">
+        </label>
+        <button id="refresh-btn" title="Rescan the data directory">⟳ Rescan data dir</button>
+      </div>
+    </section>
+
+    <section id="tab-search" class="tab-panel">
+      <input id="search-input" type="search" placeholder="Search names (e.g. Colosseo)…" autocomplete="off">
+      <div id="search-results"></div>
+    </section>
+
+    <section id="tab-sql" class="tab-panel">
+      <p class="muted">Read-only SQL over the local GeoParquet files. Each dataset is a view:
+        <code id="sql-views"></code></p>
+      <textarea id="sql-input" rows="7" spellcheck="false">SELECT categories."primary" AS category, count(*) AS n
+FROM place
+GROUP BY category
+ORDER BY n DESC
+LIMIT 25</textarea>
+      <div class="sql-actions">
+        <button id="sql-run">Run (Ctrl+Enter)</button>
+        <button id="sql-clear-map" class="secondary">Clear map result</button>
+      </div>
+      <div id="sql-status" class="muted"></div>
+      <div id="sql-results"></div>
+    </section>
+
+    <footer>
+      <span id="status-line"></span>
+      <span class="attribution">Data © <a href="https://overturemaps.org" target="_blank" rel="noopener">Overture Maps Foundation</a></span>
+    </footer>
+  </div>
+
+  <div id="map"></div>
+
+  <script src="/static/vendor/maplibre-gl.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+# Downloaded GeoParquet data (large; regenerate with scripts/download_italy.py)
+data/
+*.duckdb
+*.duckdb.wal
+
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
