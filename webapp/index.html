@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Overture Italy — browser GeoParquet explorer</title>
+  <link rel="stylesheet" href="./vendor/maplibre-gl.css">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div id="sidebar">
+    <header>
+      <h1>Overture Italy</h1>
+      <p class="subtitle">GeoParquet explorer — runs entirely in your browser</p>
+      <p id="engine-status" class="muted">Starting DuckDB…</p>
+    </header>
+
+    <nav id="tabs">
+      <button class="tab active" data-tab="layers">Layers</button>
+      <button class="tab" data-tab="search">Search</button>
+      <button class="tab" data-tab="sql">SQL</button>
+    </nav>
+
+    <section id="tab-layers" class="tab-panel active">
+      <label class="release-row">Overture release
+        <input id="release-input" value="2026-06-17.0" spellcheck="false">
+      </label>
+      <div id="layer-list"></div>
+      <div class="panel-footer">
+        <label>Features per layer
+          <input id="limit-input" type="number" value="1000" min="100" max="10000" step="100">
+        </label>
+        <button id="local-file-btn">＋ Open local GeoParquet…</button>
+        <input id="local-file-input" type="file" accept=".parquet,.geoparquet" multiple hidden>
+      </div>
+    </section>
+
+    <section id="tab-search" class="tab-panel">
+      <input id="search-input" type="search" placeholder="Search names in current view…" autocomplete="off">
+      <p class="muted">Searches <code>names.primary</code> inside the current map view
+        (a full-country name scan over the network would be slow).</p>
+      <div id="search-results"></div>
+    </section>
+
+    <section id="tab-sql" class="tab-panel">
+      <p class="muted">DuckDB SQL in your browser. Enabled datasets are views named after
+        their feature type: <code id="sql-views">—</code></p>
+      <textarea id="sql-input" rows="7" spellcheck="false">SELECT categories."primary" AS category, count(*) AS n
+FROM place
+WHERE bbox.xmin BETWEEN 12.45 AND 12.55
+  AND bbox.ymin BETWEEN 41.87 AND 41.95
+GROUP BY category ORDER BY n DESC LIMIT 25</textarea>
+      <div class="sql-actions">
+        <button id="sql-run">Run (Ctrl+Enter)</button>
+        <button id="sql-clear-map" class="secondary">Clear map result</button>
+      </div>
+      <div id="sql-status" class="muted"></div>
+      <div id="sql-results"></div>
+    </section>
+
+    <footer>
+      <span id="status-line"></span>
+      <span class="attribution">Data © <a href="https://overturemaps.org" target="_blank" rel="noopener">Overture Maps Foundation</a></span>
+    </footer>
+  </div>
+
+  <div id="map"></div>
+
+  <script src="./vendor/maplibre-gl.js"></script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
