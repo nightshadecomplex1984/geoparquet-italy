@@ -34,6 +34,9 @@ jobs:
           curl -fsSL -o webapp/vendor/duckdb/extensions/$DUCKDB_CORE_VERSION/wasm_eh/parquet.duckdb_extension.wasm \
             https://extensions.duckdb.org/$DUCKDB_CORE_VERSION/wasm_eh/parquet.duckdb_extension.wasm
       - uses: actions/configure-pages@v5
+        with:
+          # Create the Pages site automatically on first deploy
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: webapp
