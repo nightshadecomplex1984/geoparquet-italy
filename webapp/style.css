@@ -132,3 +132,21 @@ button.secondary { background: #2d333b; }
   font-size: 9px; text-transform: uppercase; letter-spacing: 0.4px;
   color: #9aa4b2; border: 1px solid #444c56; border-radius: 3px; padding: 0 3px;
 }
+
+/* Italy-wide extract download */
+.italy-download {
+  border-top: 1px solid #30363d; padding-top: 10px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.italy-download label {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  color: #9aa4b2; font-size: 12px;
+}
+.italy-download select {
+  background: #2d333b; border: 1px solid #444c56; border-radius: 6px;
+  color: inherit; padding: 5px 6px; font: inherit; width: 150px;
+}
+#italy-download-btn:disabled { opacity: 0.5; cursor: default; }
+#italy-download-status { min-height: 14px; }
+#italy-download-status.error { color: #f85149; }
+#italy-download-status.ok { color: #3fb950; }

@@ -77,6 +77,7 @@ const map = new maplibregl.Map({
 map.addControl(new maplibregl.NavigationControl(), "top-right");
 map.addControl(new maplibregl.ScaleControl(), "bottom-right");
 window.map = map;
+window.app = { state, query: (sql) => query(sql) }; // console access for debugging
 
 function whenStyleReady(fn) {
   if (map.isStyleLoaded()) { fn(); return; }
@@ -519,6 +520,116 @@ async function registerLocalFile(file) {
   await state.db.registerFileBuffer(file.name, bytes);
 }
 
+/* ----------------------------------------------- Italy-wide extracts */
+
+// Bounding box covering all of Italy incl. Sardinia, Sicily and the Pelagie
+// islands. A bbox necessarily includes slivers of neighbouring countries
+// (Corsica, Malta, Alpine borders); the desktop downloader does an exact
+// boundary clip if that matters.
+const ITALY_BBOX = { xmin: 6.5, ymin: 35.3, xmax: 18.7, ymax: 47.2 };
+
+// GeoParquet 1.0 file metadata so QGIS/GDAL recognise the geometry column.
+const GEOPARQUET_META = JSON.stringify({
+  version: "1.0.0",
+  primary_column: "geometry",
+  columns: { geometry: { encoding: "WKB", geometry_types: [] } },
+});
+
+const italySelect = document.getElementById("italy-layer-select");
+const italyBtn = document.getElementById("italy-download-btn");
+const italyStatus = document.getElementById("italy-download-status");
+
+Object.keys(OVERTURE_TYPES).forEach((type) => {
+  const opt = document.createElement("option");
+  opt.value = type;
+  opt.textContent = type;
+  italySelect.appendChild(opt);
+});
+
+function fmtRows(n) {
+  return n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(0) + "k" : String(n);
+}
+
+function setItalyStatus(text, cls) {
+  italyStatus.textContent = text;
+  italyStatus.className = cls || "muted";
+}
+
+async function downloadItalyExtract() {
+  const type = italySelect.value;
+  const relation = `read_parquet('${remoteSource(type)}', hive_partitioning=true)`;
+  const where =
+    `bbox.xmin <= ${ITALY_BBOX.xmax} AND bbox.xmax >= ${ITALY_BBOX.xmin} ` +
+    `AND bbox.ymin <= ${ITALY_BBOX.ymax} AND bbox.ymax >= ${ITALY_BBOX.ymin}`;
+
+  italyBtn.disabled = true;
+  const started = performance.now();
+  const tick = setInterval(() => {
+    const s = Math.round((performance.now() - started) / 1000);
+    if (italyStatus.dataset.phase) {
+      setItalyStatus(`${italyStatus.dataset.phase} — ${s}s elapsed`);
+    }
+  }, 1000);
+
+  try {
+    italyStatus.dataset.phase = `Counting ${type} features in Italy`;
+    setItalyStatus(italyStatus.dataset.phase + " …");
+    const count = Number((await query(`SELECT count(*) FROM ${relation} WHERE ${where}`)).rows[0][0]);
+
+    if (count === 0) {
+      setItalyStatus("No features found — check the release id.", "error");
+      return;
+    }
+    if (count > 5_000_000) {
+      const ok = confirm(
+        `${type} has ${fmtRows(count)} features in Italy - several GB. ` +
+        "The browser will likely run out of memory; the desktop downloader " +
+        "(scripts/download_italy.py) is the right tool for this layer. Try anyway?"
+      );
+      if (!ok) { setItalyStatus("Cancelled."); return; }
+    } else if (count > 1_000_000) {
+      const ok = confirm(
+        `${type} has ${fmtRows(count)} features in Italy. The download can take ` +
+        "many minutes and a few hundred MB of memory. Continue?"
+      );
+      if (!ok) { setItalyStatus("Cancelled."); return; }
+    }
+
+    italyStatus.dataset.phase = `Downloading ${fmtRows(count)} ${type} features from S3`;
+    const fname = `italy_${type}.parquet`;
+    await query(
+      `COPY (SELECT * FROM ${relation} WHERE ${where}) TO '${fname}' ` +
+      `(FORMAT PARQUET, COMPRESSION ZSTD, KV_METADATA {geo: '${GEOPARQUET_META}'})`
+    );
+
+    italyStatus.dataset.phase = "";
+    setItalyStatus("Preparing file …");
+    const bytes = await state.db.copyFileToBuffer(fname);
+    saveBlob(new Blob([bytes], { type: "application/octet-stream" }), fname);
+    await state.db.dropFile(fname).catch(() => {});
+    const secs = Math.round((performance.now() - started) / 1000);
+    const mb = (bytes.length / 1e6).toFixed(1);
+    setItalyStatus(`Saved ${fname}: ${fmtRows(count)} features, ${mb} MB, ${secs}s. Opens in QGIS/DuckDB.`, "ok");
+  } catch (err) {
+    setItalyStatus("Failed: " + (err.message || err), "error");
+    console.error(err);
+  } finally {
+    italyStatus.dataset.phase = "";
+    clearInterval(tick);
+    italyBtn.disabled = false;
+  }
+}
+
+italyBtn.addEventListener("click", downloadItalyExtract);
+
+function saveBlob(blob, filename) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 /* -------------------------------------------------------------- exports */
 
 function exportGeoJSON(ds) {
@@ -527,12 +638,7 @@ function exportGeoJSON(ds) {
     setStatus(`No loaded features to export for '${ds.name}' — enable the layer first.`);
     return;
   }
-  const blob = new Blob([JSON.stringify(fc)], { type: "application/geo+json" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = `overture_${ds.name}.geojson`;
-  a.click();
-  URL.revokeObjectURL(a.href);
+  saveBlob(new Blob([JSON.stringify(fc)], { type: "application/geo+json" }), `overture_${ds.name}.geojson`);
 }
 
 /* --------------------------------------------------------------- popups */
