@@ -23,6 +23,12 @@ via HTTP range requests, geometry arrives as WKB and is decoded in JS, MapLibre 
 - **Local files**: open your downloaded `italy_*.parquet` files via the file picker
   (loaded into browser memory — fine for per-type extracts up to ~1 GB).
 - **Export**: download whatever a layer currently shows as GeoJSON.
+- **Download all of Italy**: pick a feature type and download the complete Italy-wide
+  extract as a GeoParquet file, straight from the browser (Italy bounding box, so tiny
+  slivers of neighbouring countries are included — the desktop downloader does an exact
+  boundary clip). The file carries proper GeoParquet metadata, so it opens directly in
+  QGIS, DuckDB, or back in this app via the file picker. Small layers (divisions, places,
+  water) work great; for buildings/addresses (several GB) use the desktop script instead.
 
 Expect seconds-per-query latency at country scale — it is trading speed for zero setup.
 
