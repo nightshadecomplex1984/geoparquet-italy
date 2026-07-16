@@ -1,24 +1,55 @@
 # Overture Italy — GeoParquet Explorer
 
-Query and browse [Overture Maps](https://overturemaps.org) data for Italy: a DuckDB-powered
-downloader that extracts Italy from Overture's cloud-hosted GeoParquet, plus a local web GUI
-(map + search + SQL console) layered directly on top of the GeoParquet files. No database
-import step — DuckDB queries the files in place.
+Query and browse [Overture Maps](https://overturemaps.org) data for Italy, two ways:
+
+1. **Browser-only web app** (`webapp/`) — DuckDB-WASM runs inside your browser and queries
+   Overture's cloud-hosted GeoParquet straight from S3. Nothing to install, no backend.
+2. **Local toolchain** — a DuckDB-powered downloader that extracts Italy into local GeoParquet
+   files, plus a local web GUI (map + search + SQL console) layered directly on top of them.
+   Faster and suited to full-country extracts.
+
+No database import step in either case — DuckDB queries the GeoParquet in place.
+
+## Option 1: the browser-only web app
+
+Everything runs client-side: DuckDB-WASM in a web worker reads Overture's GeoParquet from S3
+via HTTP range requests, geometry arrives as WKB and is decoded in JS, MapLibre renders it.
+
+- **Layers**: all 15 Overture feature types; the current viewport is fetched live from S3
+  (bbox-filtered, so only relevant row groups are transferred). Heavy types are zoom-gated.
+- **Search**: name search within the current view.
+- **SQL**: a full DuckDB console — enabled datasets are views named after their type.
+  Query results with a geometry column get plotted on the map.
+- **Local files**: open your downloaded `italy_*.parquet` files via the file picker
+  (loaded into browser memory — fine for per-type extracts up to ~1 GB).
+- **Export**: download whatever a layer currently shows as GeoJSON.
+
+Expect seconds-per-query latency at country scale — it is trading speed for zero setup.
+
+### Hosting it
+
+The app is static files. Deploy to GitHub Pages: enable **Settings → Pages → Source: GitHub
+Actions** in your repo, then push to `main` — `.github/workflows/pages.yml` publishes
+`webapp/` (and self-hosts the DuckDB wasm parquet extension so the site has no runtime
+dependency on the extension CDN). Any other static host works too; locally,
+`python -m http.server -d webapp` and open http://localhost:8000.
+
+## Option 2: the local toolchain
 
 ```
 ┌────────────────────┐     scripts/download_italy.py      ┌──────────────────────┐
 │ Overture on S3     │ ─────────(DuckDB + spatial)──────▶ │ data/italy_*.parquet │
 │ (GeoParquet)       │    clipped to Italy's boundary     │ (local GeoParquet)   │
-└────────────────────┘                                    └──────────┬───────────┘
-                                                                     │ DuckDB (in place)
-                                                          ┌──────────▼───────────┐
-                                                          │ python -m server     │
-                                                          │ FastAPI + MapLibre   │
-                                                          │ http://localhost:8000│
-                                                          └──────────────────────┘
+└─────────┬──────────┘                                    └──────────┬───────────┘
+          │ HTTP range requests                                      │ DuckDB (in place)
+┌─────────▼──────────┐                                    ┌──────────▼───────────┐
+│ webapp/ (option 1) │                                    │ python -m server     │
+│ DuckDB-WASM in the │                                    │ FastAPI + MapLibre   │
+│ browser, no server │                                    │ http://localhost:8000│
+└────────────────────┘                                    └──────────────────────┘
 ```
 
-## Requirements
+### Requirements (local toolchain)
 
 - Python 3.10+ (Windows, macOS, or Linux)
 - Internet access for the download step (Overture's public S3 bucket)
@@ -26,7 +57,7 @@ import step — DuckDB queries the files in place.
 
 QGIS is optional: the same `data/*.parquet` files open directly in QGIS as vector layers.
 
-## Setup
+### Setup
 
 ```bash
 python -m venv .venv
@@ -34,7 +65,7 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-## 1. Download data
+### 1. Download data
 
 Start small — a smoke test with places in central Rome:
 
@@ -70,7 +101,7 @@ Useful flags:
 One GeoParquet file per feature type is written (`data/italy_place.parquet`,
 `data/italy_building.parquet`, …). Schemas differ per type, so they are deliberately not merged.
 
-## 2. Explore in the GUI
+### 2. Explore in the GUI
 
 ```bash
 python -m server
@@ -100,7 +131,7 @@ Features:
 The server runs on `127.0.0.1:8000` by default (`HOST`/`PORT` env vars to change) and is
 intended as a **local, single-user tool** — don't expose it to the internet.
 
-## API
+### API
 
 The GUI is a thin client over a JSON API you can use directly:
 

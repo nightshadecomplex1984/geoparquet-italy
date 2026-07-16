@@ -3,6 +3,9 @@ data/
 *.duckdb
 *.duckdb.wal
 
+# DuckDB wasm extensions are fetched at deploy time (see .github/workflows/pages.yml)
+webapp/vendor/duckdb/extensions/
+
 __pycache__/
 *.pyc
 .pytest_cache/

@@ -1,0 +1,41 @@
+name: Deploy web app to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths: ["webapp/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      # Self-host the DuckDB wasm parquet extension next to the app so the
+      # deployed site has no runtime dependency on extensions.duckdb.org.
+      # Version must match the DuckDB core inside the vendored duckdb-wasm
+      # build (see DUCKDB_CORE_VERSION in webapp/app.js).
+      - name: Fetch DuckDB wasm parquet extension
+        run: |
+          DUCKDB_CORE_VERSION=v1.4.3
+          mkdir -p webapp/vendor/duckdb/extensions/$DUCKDB_CORE_VERSION/wasm_eh
+          curl -fsSL -o webapp/vendor/duckdb/extensions/$DUCKDB_CORE_VERSION/wasm_eh/parquet.duckdb_extension.wasm \
+            https://extensions.duckdb.org/$DUCKDB_CORE_VERSION/wasm_eh/parquet.duckdb_extension.wasm
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: webapp
+      - id: deployment
+        uses: actions/deploy-pages@v4
