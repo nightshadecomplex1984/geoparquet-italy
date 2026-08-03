@@ -3,11 +3,18 @@
  * DuckDB-WASM runs in a web worker and queries Overture's cloud-hosted
  * GeoParquet directly from S3 via HTTP range requests. Nothing is installed
  * and no backend is involved; local .parquet files can also be opened.
+ *
+ * Note on addressing: DuckDB-WASM cannot expand an `s3://.../*.parquet` glob
+ * (that needs the full httpfs extension and a bucket LIST). Instead we list the
+ * release's part files ourselves with the S3 REST API — the bucket serves it
+ * with permissive CORS — and hand DuckDB explicit https:// URLs, which it reads
+ * with range requests.
  */
 
 import * as duckdb from "./vendor/duckdb/duckdb-wasm.mjs";
 
-const S3_BASE = "s3://overturemaps-us-west-2/release";
+const S3_HTTP_BASE = "https://overturemaps-us-west-2.s3.us-west-2.amazonaws.com";
+const FALLBACK_RELEASE = "2026-07-22.0";
 
 // type -> theme for every Overture core feature type.
 const OVERTURE_TYPES = {
@@ -47,12 +54,13 @@ const PALETTE = [
 
 const state = {
   conn: null,
-  release: document.getElementById("release-input").value.trim(),
+  release: FALLBACK_RELEASE,
   datasets: new Map(), // name -> {name, kind:'remote'|'local', relation, columns, viewReady, data, generation}
   active: new Set(),
   colors: {},
   notes: {},
   queryChain: Promise.resolve(), // serialize queries (wasm is single-threaded anyway)
+  parts: new Map(), // "<release>/<type>" -> [https url, ...]
 };
 
 /* ------------------------------------------------------------------- map */
@@ -77,7 +85,14 @@ const map = new maplibregl.Map({
 map.addControl(new maplibregl.NavigationControl(), "top-right");
 map.addControl(new maplibregl.ScaleControl(), "bottom-right");
 window.map = map;
-window.app = { state, query: (sql) => query(sql) }; // console access for debugging
+// Console access for debugging (and for the headless smoke tests).
+window.app = {
+  state,
+  query: (sql) => query(sql),
+  listReleases: () => listReleases(),
+  partUrls: (type) => partUrls(type),
+  remoteRelation: (type) => remoteRelation(type),
+};
 
 function whenStyleReady(fn) {
   if (map.isStyleLoaded()) { fn(); return; }
@@ -231,8 +246,63 @@ async function loadParquetExtension() {
 
 /* -------------------------------------------------------------- datasets */
 
-function remoteSource(type) {
-  return `${S3_BASE}/${state.release}/theme=${OVERTURE_TYPES[type]}/type=${type}/*.parquet`;
+/* --------------------------------------------- Overture S3 file discovery */
+
+// One page of an S3 ListObjectsV2 response.
+async function listS3Page(params) {
+  const url = `${S3_HTTP_BASE}/?list-type=2&${params}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`S3 listing failed (HTTP ${res.status})`);
+  const xml = await res.text();
+  return {
+    keys: [...xml.matchAll(/<Key>([^<]+)<\/Key>/g)].map((m) => m[1]),
+    prefixes: [...xml.matchAll(/<Prefix>([^<]+)<\/Prefix>/g)].map((m) => m[1]),
+    token: (xml.match(/<NextContinuationToken>([^<]+)<\/NextContinuationToken>/) || [])[1],
+  };
+}
+
+async function listAllKeys(prefix) {
+  const keys = [];
+  let token;
+  do {
+    const q = `prefix=${encodeURIComponent(prefix)}` + (token ? `&continuation-token=${encodeURIComponent(token)}` : "");
+    const page = await listS3Page(q);
+    keys.push(...page.keys);
+    token = page.token;
+  } while (token);
+  return keys;
+}
+
+// Available Overture releases, oldest first.
+async function listReleases() {
+  const page = await listS3Page("delimiter=/&prefix=release/");
+  return page.prefixes
+    .map((p) => p.replace(/^release\//, "").replace(/\/$/, ""))
+    .filter((r) => r && r !== "release")
+    .sort();
+}
+
+// The https:// URLs of every part file for one feature type, cached per release.
+async function partUrls(type) {
+  const cacheKey = `${state.release}/${type}`;
+  if (state.parts.has(cacheKey)) return state.parts.get(cacheKey);
+
+  const prefix = `release/${state.release}/theme=${OVERTURE_TYPES[type]}/type=${type}/`;
+  const keys = (await listAllKeys(prefix)).filter((k) => k.endsWith(".parquet"));
+  if (!keys.length) {
+    throw new Error(
+      `No ${type} files in release ${state.release}. Pick a different release.`
+    );
+  }
+  const urls = keys.map((k) => `${S3_HTTP_BASE}/${k}`);
+  state.parts.set(cacheKey, urls);
+  return urls;
+}
+
+// A DuckDB table expression reading every part file of a feature type.
+async function remoteRelation(type) {
+  const urls = await partUrls(type);
+  return `read_parquet([${urls.map((u) => `'${u}'`).join(", ")}])`;
 }
 
 function registerRemoteDatasets() {
@@ -250,14 +320,14 @@ function registerRemoteDatasets() {
   });
 }
 
-function datasetRelation(ds) {
+async function datasetRelation(ds) {
   if (ds.kind === "local") return `read_parquet('${ds.file}')`;
-  return `read_parquet('${remoteSource(ds.name)}', hive_partitioning=true)`;
+  return remoteRelation(ds.name);
 }
 
 async function ensureView(ds) {
   if (ds.viewReady) return;
-  await query(`CREATE OR REPLACE VIEW "${ds.name}" AS SELECT * FROM ${datasetRelation(ds)}`);
+  await query(`CREATE OR REPLACE VIEW "${ds.name}" AS SELECT * FROM ${await datasetRelation(ds)}`);
   const described = await query(`DESCRIBE SELECT * FROM "${ds.name}"`);
   ds.columns = {};
   described.rows.forEach(([name, coltype]) => { ds.columns[name] = coltype; });
@@ -325,7 +395,10 @@ function layerRow(ds) {
   const name = document.createElement("span");
   name.className = "layer-name";
   name.textContent = ds.name;
-  name.title = ds.kind === "remote" ? remoteSource(ds.name) : ds.file;
+  name.title =
+    ds.kind === "remote"
+      ? `Overture ${state.release} · theme=${OVERTURE_TYPES[ds.name]}/type=${ds.name}`
+      : ds.file;
 
   const badge = document.createElement("span");
   badge.className = "layer-badge";
@@ -474,12 +547,39 @@ map.on("moveend", () => {
 
 document.getElementById("limit-input").addEventListener("change", refreshActiveLayers);
 
-document.getElementById("release-input").addEventListener("change", (e) => {
-  state.release = e.target.value.trim();
+const releaseSelect = document.getElementById("release-select");
+
+releaseSelect.addEventListener("change", (e) => {
+  state.release = e.target.value;
   registerRemoteDatasets();
   renderLayerList();
   refreshActiveLayers();
+  setStatus(`Overture release ${state.release}`);
 });
+
+// Discover the releases that actually exist rather than hardcoding one.
+async function loadReleases() {
+  try {
+    const releases = await listReleases();
+    if (!releases.length) throw new Error("no releases listed");
+    releaseSelect.innerHTML = "";
+    releases.forEach((r) => {
+      const opt = document.createElement("option");
+      opt.value = r;
+      opt.textContent = r;
+      releaseSelect.appendChild(opt);
+    });
+    state.release = releases[releases.length - 1]; // newest
+    releaseSelect.value = state.release;
+    setStatus(`Overture release ${state.release} (latest of ${releases.length})`);
+  } catch (err) {
+    releaseSelect.innerHTML = `<option value="${FALLBACK_RELEASE}">${FALLBACK_RELEASE}</option>`;
+    state.release = FALLBACK_RELEASE;
+    setStatus(`Could not list Overture releases (${err.message}); using ${FALLBACK_RELEASE}`);
+  }
+  registerRemoteDatasets();
+  renderLayerList();
+}
 
 /* ------------------------------------------------------------ local files */
 
@@ -557,7 +657,6 @@ function setItalyStatus(text, cls) {
 
 async function downloadItalyExtract() {
   const type = italySelect.value;
-  const relation = `read_parquet('${remoteSource(type)}', hive_partitioning=true)`;
   const where =
     `bbox.xmin <= ${ITALY_BBOX.xmax} AND bbox.xmax >= ${ITALY_BBOX.xmin} ` +
     `AND bbox.ymin <= ${ITALY_BBOX.ymax} AND bbox.ymax >= ${ITALY_BBOX.ymin}`;
@@ -574,6 +673,7 @@ async function downloadItalyExtract() {
   try {
     italyStatus.dataset.phase = `Counting ${type} features in Italy`;
     setItalyStatus(italyStatus.dataset.phase + " …");
+    const relation = await remoteRelation(type);
     const count = Number((await query(`SELECT count(*) FROM ${relation} WHERE ${where}`)).rows[0][0]);
 
     if (count === 0) {
@@ -861,6 +961,8 @@ document.querySelectorAll(".tab").forEach((btn) => {
 registerRemoteDatasets();
 renderLayerList();
 setStatus(Object.keys(OVERTURE_TYPES).length + " Overture feature types available");
+
+loadReleases();
 
 initEngine().catch((err) => {
   setEngineStatus("DuckDB failed to start: " + err, "error");

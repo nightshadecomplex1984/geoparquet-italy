@@ -14,6 +14,12 @@ No database import step in either case — DuckDB queries the GeoParquet in plac
 
 Everything runs client-side: DuckDB-WASM in a web worker reads Overture's GeoParquet from S3
 via HTTP range requests, geometry arrives as WKB and is decoded in JS, MapLibre renders it.
+The app lists the release's part files itself with the S3 REST API (the bucket allows CORS)
+and hands DuckDB explicit `https://` URLs — DuckDB-WASM cannot expand an `s3://…/*.parquet`
+glob, which needs the full httpfs extension and a bucket LIST.
+
+The **Overture release** dropdown is populated from the bucket at startup and defaults to the
+newest release, so the app follows Overture's monthly publishing without a code change.
 
 - **Layers**: all 15 Overture feature types; the current viewport is fetched live from S3
   (bbox-filtered, so only relevant row groups are transferred). Heavy types are zoom-gated.
@@ -99,7 +105,7 @@ Useful flags:
 
 | Flag | Meaning |
 |---|---|
-| `--release 2026-06-17.0` | Pin an Overture release (default: `2026-06-17.0`) |
+| `--release 2026-07-22.0` | Pin an Overture release (default: `latest`, auto-detected from the bucket) |
 | `--data-dir data` | Output directory |
 | `--force` | Re-download even if the file already exists |
 | `--refresh-boundary` | Refetch the Italy boundary |

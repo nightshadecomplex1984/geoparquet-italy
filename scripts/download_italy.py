@@ -23,14 +23,18 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import time
+import urllib.request
 from pathlib import Path
 
 import duckdb
 
-DEFAULT_RELEASE = "2026-06-17.0"
+DEFAULT_RELEASE = "latest"
+FALLBACK_RELEASE = "2026-07-22.0"
 S3_BASE = "s3://overturemaps-us-west-2/release"
+S3_HTTP_BASE = "https://overturemaps-us-west-2.s3.us-west-2.amazonaws.com"
 
 # All Overture core feature types, keyed by type name -> theme.
 FEATURE_TYPES: dict[str, str] = {
@@ -66,6 +70,23 @@ def connect(data_dir: Path) -> duckdb.DuckDBPyConnection:
     con.execute("LOAD spatial; LOAD httpfs;")
     con.execute("SET s3_region = 'us-west-2';")
     return con
+
+
+def resolve_release(release: str) -> str:
+    """Turn 'latest' into the newest release published in the Overture bucket."""
+    if release != "latest":
+        return release
+    try:
+        url = f"{S3_HTTP_BASE}/?list-type=2&delimiter=/&prefix=release/"
+        with urllib.request.urlopen(url, timeout=30) as resp:
+            xml = resp.read().decode()
+        releases = sorted(set(re.findall(r"<Prefix>release/([^<]+)/</Prefix>", xml)))
+        if releases:
+            print(f"Latest Overture release: {releases[-1]}")
+            return releases[-1]
+    except Exception as exc:  # offline or bucket layout changed
+        print(f"Could not list releases ({exc}); using {FALLBACK_RELEASE}")
+    return FALLBACK_RELEASE
 
 
 def source_path(release: str, feature_type: str) -> str:
@@ -190,7 +211,11 @@ def parse_types(raw: list[str]) -> list[str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--release", default=DEFAULT_RELEASE, help=f"Overture release (default {DEFAULT_RELEASE})")
+    parser.add_argument(
+        "--release",
+        default=DEFAULT_RELEASE,
+        help="Overture release id, or 'latest' to auto-detect (default: latest)",
+    )
     parser.add_argument("--data-dir", default="data", help="Output directory (default ./data)")
     parser.add_argument(
         "--types",
@@ -205,19 +230,20 @@ def main() -> None:
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir)
+    release = resolve_release(args.release)
     con = connect(data_dir)
 
     if args.rome_test:
-        rome_test(con, args.release, data_dir)
+        rome_test(con, release, data_dir)
         return
 
     types = parse_types(args.types)
     if not types and not args.refresh_boundary:
         parser.error("Nothing to do: pass --types (e.g. --types place, --types core, --types all) or --rome-test")
 
-    ensure_italy_boundary(con, args.release, data_dir, refresh=args.refresh_boundary)
+    ensure_italy_boundary(con, release, data_dir, refresh=args.refresh_boundary)
     for feature_type in types:
-        download_type(con, args.release, feature_type, data_dir, skip_existing=not args.force)
+        download_type(con, release, feature_type, data_dir, skip_existing=not args.force)
 
     print("All done. Start the viewer with:  python -m server")
 
