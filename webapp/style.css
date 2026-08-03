@@ -116,7 +116,10 @@ button.secondary { background: #2d333b; }
   display: flex; justify-content: space-between; align-items: center; gap: 8px;
   color: #9aa4b2; font-size: 12px; margin-bottom: 10px;
 }
-.release-row input { width: 130px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+.release-row select {
+  width: 150px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px;
+  background: #2d333b; border: 1px solid #444c56; border-radius: 6px; color: inherit; padding: 5px 6px;
+}
 
 #engine-status { margin: 6px 0 0; }
 #engine-status.error { color: #f85149; }
